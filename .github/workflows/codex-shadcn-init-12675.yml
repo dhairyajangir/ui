@@ -1,0 +1,87 @@
+name: shadcn init 12675 candidate validation
+
+on:
+  push:
+    branches:
+      - validation/shadcn-init-12675-1112cq
+
+permissions:
+  contents: read
+
+jobs:
+  validation:
+    if: >-
+      ${{ github.event_name == 'push' && github.event.created &&
+          github.repository == 'dhairyajangir/ui' &&
+          github.event.repository.fork && !github.event.repository.private &&
+          github.ref == 'refs/heads/validation/shadcn-init-12675-1112cq' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [focused-route, repository]
+    env:
+      NEXT_PUBLIC_APP_URL: http://localhost:4000
+      NEXT_PUBLIC_V0_URL: https://v0.dev
+      EXPECTED_BASE: dd41d19e2f80ff6891951f7ced74c2c9a650b065
+      EXPECTED_CANDIDATE: a62ce5f30d16a8e935f64e3079c27d8c9dbb0778
+      EXPECTED_TREE: 63830c1b34d68f96554d9644a674f2296a1688c4
+    steps:
+      - name: Checkout validation branch
+        uses: actions/checkout@a37ce9120846195fa4ece8f58b268e6043cb2f26 # v3
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 3
+          persist-credentials: false
+
+      - name: Verify and select exact candidate tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-list --parents -n 1 HEAD | wc -w)" -eq 2
+          test "$(git rev-parse HEAD^1)" = "$EXPECTED_CANDIDATE"
+          test "$(git rev-parse 'HEAD^1^{tree}')" = "$EXPECTED_TREE"
+          test "$(git rev-list --parents -n 1 HEAD^1 | wc -w)" -eq 2
+          test "$(git rev-parse 'HEAD^1^1')" = "$EXPECTED_BASE"
+          test "$(git show -s --format='%ae|%ce' HEAD)" = 'thinkelite@hotmail.com|thinkelite@hotmail.com'
+          test "$(git show -s --format='%ae|%ce' HEAD^1)" = 'thinkelite@hotmail.com|thinkelite@hotmail.com'
+          printf 'A\t.github/workflows/codex-shadcn-init-12675.yml\n' > "$RUNNER_TEMP/expected-paths.txt"
+          git diff-tree --no-commit-id --name-status -r HEAD^1 HEAD > "$RUNNER_TEMP/actual-paths.txt"
+          cmp "$RUNNER_TEMP/expected-paths.txt" "$RUNNER_TEMP/actual-paths.txt"
+          test "$(git ls-tree HEAD .github/workflows/codex-shadcn-init-12675.yml | cut -d ' ' -f1)" = 100644
+          git -c advice.detachedHead=false checkout --detach HEAD^1
+          test "$(git rev-parse 'HEAD^{tree}')" = "$EXPECTED_TREE"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          printf 'Validated candidate commit: %s\n' "$(git rev-parse HEAD)"
+          printf 'Validated candidate tree: %s\n' "$EXPECTED_TREE"
+
+      - name: Install Node.js
+        uses: actions/setup-node@3235b876344d2a9aa001b8d1453c930bba69e610 # v3
+        with:
+          node-version: 22
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10.33.4
+          run_install: false
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build registry for route tests
+        if: ${{ matrix.suite == 'focused-route' }}
+        run: pnpm --filter=v4 registry:build
+
+      - name: Run actual init route tests
+        if: ${{ matrix.suite == 'focused-route' }}
+        run: pnpm exec vitest run --config vitest.config.ts --reporter=verbose 'apps/v4/app/(app)/(create)/init/route.test.ts'
+
+      - name: Run default repository test command
+        if: ${{ matrix.suite == 'repository' }}
+        run: pnpm test
